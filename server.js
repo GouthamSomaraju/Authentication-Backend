@@ -7,13 +7,13 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// 🌐 Enable frontend connection
+// 🌐 Enable frontend access
 app.use(cors());
 app.use(express.json());
 
-// ✅ Create async MySQL connection
 let db;
 
+// 🔌 Connect to MySQL database
 async function connectToDatabase() {
   try {
     db = await mysql.createPool({
@@ -21,10 +21,11 @@ async function connectToDatabase() {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
+      port: process.env.DB_PORT || 3306,
       waitForConnections: true,
       connectionLimit: 10,
       ssl: {
-        rejectUnauthorized: false // 👉 needed if using Render or cloud-hosted DB with SSL
+        rejectUnauthorized: false
       }
     });
 
@@ -38,15 +39,15 @@ async function connectToDatabase() {
 
     console.log('✅ MySQL connected and users table ready');
   } catch (error) {
-    console.error('❌ MySQL connection error:', error.message);
-    process.exit(1); // Stop server if DB fails
+    console.error('❌ MySQL connection error:', error);
+    process.exit(1);
   }
 }
 
-// 🔐 Signup Route
+// 🔐 Signup route
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password } = req.body;
-  console.log('📥 Signup request:', req.body);
+  console.log('📥 Signup:', req.body);
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password required' });
@@ -54,7 +55,8 @@ app.post('/api/auth/signup', async (req, res) => {
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    await db.query('INSERT INTO users (email, password) VALUES (?, ?)', [email, hashedPassword]);
+    const query = 'INSERT INTO users (email, password) VALUES (?, ?)';
+    await db.query(query, [email, hashedPassword]);
 
     res.status(201).json({ message: 'User registered successfully' });
   } catch (err) {
@@ -67,24 +69,26 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// 🔓 Login Route
+// 🔓 Login route
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
-  console.log('📥 Login request:', req.body);
+  console.log('📥 Login:', req.body);
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password required' });
   }
 
   try {
-    const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
 
-    if (users.length === 0) {
+    if (rows.length === 0) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    const isMatch = await bcrypt.compare(password, users[0].password);
-    if (!isMatch) {
+    const user = rows[0];
+    const match = await bcrypt.compare(password, user.password);
+
+    if (!match) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
@@ -95,13 +99,13 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ✅ Health check (optional)
+// ✅ Health check route (optional)
 app.get('/', (req, res) => {
-  res.send('✅ Auth API is running');
+  res.send('✅ Auth server is running');
 });
 
 // 🚀 Start the server
 app.listen(PORT, () => {
-  console.log(`🚀 Server listening on port ${PORT}`);
-  connectToDatabase(); // connect DB when server starts
+  console.log(`🚀 Server running on port ${PORT}`);
+  connectToDatabase(); // Start DB connection on server boot
 });
