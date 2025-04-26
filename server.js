@@ -1,17 +1,20 @@
 const express = require('express');
-const mysql = require('mysql2');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
+const mysql = require('mysql2');
 require('dotenv').config();
 
 const app = express();
+const PORT = process.env.PORT || 5000;
+
+// 🌐 Allow frontend to connect
 app.use(cors());
 app.use(express.json());
 
-// Create DB Connection
+// ✅ MySQL connection using pool
 const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
+  host: process.env.DB_HOST,     // e.g., 'localhost' or Render DB host
+  user: process.env.DB_USER,     // e.g., 'root'
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
@@ -19,62 +22,86 @@ const db = mysql.createPool({
   queueLimit: 0
 }).promise();
 
+// 🧪 Test connection
+db.query('SELECT 1')
+  .then(() => console.log('✅ Connected to MySQL database'))
+  .catch((err) => console.error('❌ Database connection error:', err));
 
-// Connect to MySQL
-db.connect(err => {
-  if (err) {
-    console.error('DB connection failed:', err);
-  } else {
-    console.log('Connected to MySQL');
-  }
-});
-
-// Create Users Table (run once or ensure it exists)
+// 🧾 Create users table if not exists
 const createTable = `
-CREATE TABLE IF NOT EXISTS users (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  email VARCHAR(255) NOT NULL UNIQUE,
-  password VARCHAR(255) NOT NULL
-);`;
+  CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL
+  )
+`;
 
-db.query(createTable, (err) => {
-  if (err) console.log('Table creation error:', err);
-  else console.log('Users table ready.');
-});
+db.query(createTable)
+  .then(() => console.log('✅ Users table ready'))
+  .catch((err) => console.error('❌ Table creation error:', err));
 
-// Signup Route
+
+// 🚀 Signup route
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password } = req.body;
-  try {
-    const [existing] = await db.promise().query('SELECT * FROM users WHERE email = ?', [email]);
-    if (existing.length > 0) return res.status(400).json({ message: 'User already exists' });
 
-    const hashed = await bcrypt.hash(password, 10);
-    await db.promise().query('INSERT INTO users (email, password) VALUES (?, ?)', [email, hashed]);
-    res.status(201).json({ message: 'Signup successful' });
+  console.log('📥 Signup request:', req.body);
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required' });
+  }
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const sql = 'INSERT INTO users (email, password) VALUES (?, ?)';
+    await db.query(sql, [email, hashedPassword]);
+
+    res.status(201).json({ message: 'User registered successfully' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Signup error:', err);
+    if (err.code === 'ER_DUP_ENTRY') {
+      res.status(409).json({ message: 'Email already exists' });
+    } else {
+      res.status(500).json({ message: 'Internal server error' });
+    }
   }
 });
 
-// Login Route
+
+// 🔐 Login route
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
-  try {
-    const [users] = await db.promise().query('SELECT * FROM users WHERE email = ?', [email]);
-    if (users.length === 0) return res.status(400).json({ message: 'User not found' });
 
-    const match = await bcrypt.compare(password, users[0].password);
-    if (!match) return res.status(400).json({ message: 'Invalid password' });
+  console.log('📥 Login request:', req.body);
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required' });
+  }
+
+  try {
+    const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+
+    if (users.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const user = users[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
 
     res.status(200).json({ message: 'Login successful' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Login error:', err);
+    res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Start Server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// ✅ Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
