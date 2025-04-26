@@ -1,61 +1,60 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
-const mysql = require('mysql2');
+const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// 🌐 Allow frontend to connect
+// 🌐 Enable frontend connection
 app.use(cors());
 app.use(express.json());
 
-// ✅ MySQL connection using pool
-const db = mysql.createPool({
-  host: process.env.DB_HOST,     // e.g., 'localhost' or Render DB host
-  user: process.env.DB_USER,     // e.g., 'root'
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-}).promise();
+// ✅ Create async MySQL connection
+let db;
 
-// 🧪 Test connection
-db.query('SELECT 1')
-  .then(() => console.log('✅ Connected to MySQL database'))
-  .catch((err) => console.error('❌ Database connection error:', err));
+async function connectToDatabase() {
+  try {
+    db = await mysql.createPool({
+      host: process.env.DB_HOST,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME,
+      waitForConnections: true,
+      connectionLimit: 10,
+      ssl: {
+        rejectUnauthorized: false // 👉 needed if using Render or cloud-hosted DB with SSL
+      }
+    });
 
-// 🧾 Create users table if not exists
-const createTable = `
-  CREATE TABLE IF NOT EXISTS users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password VARCHAR(255) NOT NULL
-  )
-`;
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL
+      )
+    `);
 
-db.query(createTable)
-  .then(() => console.log('✅ Users table ready'))
-  .catch((err) => console.error('❌ Table creation error:', err));
+    console.log('✅ MySQL connected and users table ready');
+  } catch (error) {
+    console.error('❌ MySQL connection error:', error.message);
+    process.exit(1); // Stop server if DB fails
+  }
+}
 
-
-// 🚀 Signup route
+// 🔐 Signup Route
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password } = req.body;
-
   console.log('📥 Signup request:', req.body);
 
   if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+    return res.status(400).json({ message: 'Email and password required' });
   }
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    const sql = 'INSERT INTO users (email, password) VALUES (?, ?)';
-    await db.query(sql, [email, hashedPassword]);
+    await db.query('INSERT INTO users (email, password) VALUES (?, ?)', [email, hashedPassword]);
 
     res.status(201).json({ message: 'User registered successfully' });
   } catch (err) {
@@ -68,15 +67,13 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-
-// 🔐 Login route
+// 🔓 Login Route
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
-
   console.log('📥 Login request:', req.body);
 
   if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+    return res.status(400).json({ message: 'Email and password required' });
   }
 
   try {
@@ -86,9 +83,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    const user = users[0];
-    const isMatch = await bcrypt.compare(password, user.password);
-
+    const isMatch = await bcrypt.compare(password, users[0].password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
@@ -100,8 +95,13 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// ✅ Health check (optional)
+app.get('/', (req, res) => {
+  res.send('✅ Auth API is running');
+});
 
-// ✅ Start server
+// 🚀 Start the server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
+  connectToDatabase(); // connect DB when server starts
 });
